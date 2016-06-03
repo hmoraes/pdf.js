@@ -598,11 +598,20 @@ target.minified = function() {
   UglifyJS.minify(MINIFIED_DIR + '/build/pdf.worker.js', optsForHugeFile).code
     .to(MINIFIED_DIR + '/build/pdf.worker.min.js');
 
+  var UglifyCSS = require('uglifycss');
+  var optsForCSS = { maxLineLen: 15, expandVars: true };
+
+  UglifyCSS.processFiles([MINIFIED_DIR + 'web/viewer.css'], optsForCSS)
+    .to(MINIFIED_DIR + '/web/viewer.min.css');
+
   echo();
   echo('### Cleaning js files');
 
   rm(MINIFIED_DIR + '/web/viewer.js');
   rm(MINIFIED_DIR + '/web/debugger.js');
+  rm(MINIFIED_DIR + '/web/viewer.css');
+  mv(MINIFIED_DIR + '/web/viewer.min.css',
+     MINIFIED_DIR + '/web/viewer.css');
   rm(MINIFIED_DIR + '/build/pdf.js');
   rm(MINIFIED_DIR + '/build/pdf.worker.js');
   mv(MINIFIED_DIR + '/build/pdf.min.js',

@@ -904,7 +904,10 @@ html[dir='rtl'] .toolbarButton.pageDown::before {
 .secondaryToolbarButton.print::before {
   content: url(images/toolbarButton-print.png);
 }
-
+.toolbarButton.openFile,
+.secondaryToolbarButton.openFile {
+  display: none !important;
+}
 .toolbarButton.openFile::before,
 .secondaryToolbarButton.openFile::before {
   content: url(images/toolbarButton-openFile.png);
@@ -923,6 +926,7 @@ html[dir='rtl'] .toolbarButton.pageDown::before {
   outline: none;
   padding-top: 4px;
   text-decoration: none;
+  display: none !important;
 }
 .secondaryToolbarButton.bookmark {
   padding-top: 5px;
