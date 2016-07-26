@@ -662,8 +662,8 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
         return errorFont();
       }
 
-      // We are holding font.translated references just for fontRef that are not
-      // dictionaries (Dict). See explanation below.
+      // We are holding `font.translated` references just for `fontRef`s that
+      // are not actually `Ref`s, but rather `Dict`s. See explanation below.
       if (font.translated) {
         return font.translated;
       }
@@ -672,7 +672,12 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
 
       var preEvaluatedFont = this.preEvaluateFont(font, xref);
       var descriptor = preEvaluatedFont.descriptor;
-      var fontID = fontRef.num + '_' + fontRef.gen;
+
+      var fontRefIsRef = isRef(fontRef), fontID;
+      if (fontRefIsRef) {
+        fontID = fontRef.toString();
+      }
+
       if (isDict(descriptor)) {
         if (!descriptor.fontAliases) {
           descriptor.fontAliases = Object.create(null);
@@ -682,36 +687,53 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
         var hash = preEvaluatedFont.hash;
         if (fontAliases[hash]) {
           var aliasFontRef = fontAliases[hash].aliasRef;
-          if (aliasFontRef && this.fontCache.has(aliasFontRef)) {
+          if (fontRefIsRef && aliasFontRef &&
+              this.fontCache.has(aliasFontRef)) {
             this.fontCache.putAlias(fontRef, aliasFontRef);
             return this.fontCache.get(fontRef);
           }
-        }
-
-        if (!fontAliases[hash]) {
+        } else {
           fontAliases[hash] = {
             fontID: Font.getFontID()
           };
         }
 
-        fontAliases[hash].aliasRef = fontRef;
+        if (fontRefIsRef) {
+          fontAliases[hash].aliasRef = fontRef;
+        }
         fontID = fontAliases[hash].fontID;
       }
 
-      // Workaround for bad PDF generators that don't reference fonts
-      // properly, i.e. by not using an object identifier.
-      // Check if the fontRef is a Dict (as opposed to a standard object),
-      // in which case we don't cache the font and instead reference it by
-      // fontName in font.loadedName below.
-      var fontRefIsDict = isDict(fontRef);
-      if (!fontRefIsDict) {
+      // Workaround for bad PDF generators that reference fonts incorrectly,
+      // where `fontRef` is a `Dict` rather than a `Ref` (fixes bug946506.pdf).
+      // In this case we should not put the font into `this.fontCache` (which is
+      // a `RefSetCache`), since it's not meaningful to use a `Dict` as a key.
+      //
+      // However, if we don't cache the font it's not possible to remove it
+      // when `cleanup` is triggered from the API, which causes issues on
+      // subsequent rendering operations (see issue7403.pdf).
+      // A simple workaround would be to just not hold `font.translated`
+      // references in this case, but this would force us to unnecessarily load
+      // the same fonts over and over.
+      //
+      // Instead, we cheat a bit by attempting to use a modified `fontID` as a
+      // key in `this.fontCache`, to allow the font to be cached.
+      // NOTE: This works because `RefSetCache` calls `toString()` on provided
+      //       keys. Also, since `fontRef` is used when getting cached fonts,
+      //       we'll not accidentally match fonts cached with the `fontID`.
+      if (fontRefIsRef) {
         this.fontCache.put(fontRef, fontCapability.promise);
+      } else {
+        if (!fontID) {
+          fontID = (this.uniquePrefix || 'F_') + (++this.idCounters.obj);
+        }
+        this.fontCache.put('id_' + fontID, fontCapability.promise);
       }
+      assert(fontID, 'The "fontID" must be defined.');
 
       // Keep track of each font we translated so the caller can
       // load them asynchronously before calling display on a page.
-      font.loadedName = 'g_' + this.pdfManager.docId + '_f' + (fontRefIsDict ?
-        fontName.replace(/\W/g, '') : fontID);
+      font.loadedName = 'g_' + this.pdfManager.docId + '_f' + fontID;
 
       font.translated = fontCapability.promise;
 
@@ -1402,7 +1424,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
             case OPS.setFont:
               flushTextContentItem();
               textState.fontSize = args[1];
-              next(handleSetFont(args[0].name));
+              next(handleSetFont(args[0].name, null));
               return;
             case OPS.setTextRise:
               flushTextContentItem();
@@ -1608,21 +1630,17 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
               var dictName = args[0];
               var extGState = resources.get('ExtGState');
 
-              if (!isDict(extGState) || !extGState.has(dictName.name)) {
+              if (!isDict(extGState) || !isName(dictName)) {
                 break;
               }
-
-              var gsStateMap = extGState.get(dictName.name);
-              var gsStateFont = null;
-              for (var key in gsStateMap) {
-                if (key === 'Font') {
-                  assert(!gsStateFont);
-                  gsStateFont = gsStateMap[key];
-                }
+              var gState = extGState.get(dictName.name);
+              if (!isDict(gState)) {
+                break;
               }
-              if (gsStateFont) {
-                textState.fontSize = gsStateFont[1];
-                next(handleSetFont(gsStateFont[0]));
+              var gStateFont = gState.get('Font');
+              if (gStateFont) {
+                textState.fontSize = gStateFont[1];
+                next(handleSetFont(null, gStateFont[0]));
                 return;
               }
               break;
@@ -1754,7 +1772,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
       // the differences array only contains adobe standard or symbol set names,
       // in pratice it seems better to always try to create a toUnicode
       // map based of the default encoding.
-      var toUnicode, charcode;
+      var toUnicode, charcode, glyphName;
       if (!properties.composite /* is simple font */) {
         toUnicode = [];
         var encoding = properties.defaultEncoding.slice();
@@ -1762,12 +1780,18 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
         // Merge in the differences array.
         var differences = properties.differences;
         for (charcode in differences) {
-          encoding[charcode] = differences[charcode];
+          glyphName = differences[charcode];
+          if (glyphName === '.notdef') {
+            // Skip .notdef to prevent rendering errors, e.g. boxes appearing
+            // where there should be spaces (fixes issue5256.pdf).
+            continue;
+          }
+          encoding[charcode] = glyphName;
         }
         var glyphsUnicodeMap = getGlyphsUnicode();
         for (charcode in encoding) {
           // a) Map the character code to a character name.
-          var glyphName = encoding[charcode];
+          glyphName = encoding[charcode];
           // b) Look up the character name in the Adobe Glyph List (see the
           //    Bibliography) to obtain the corresponding Unicode value.
           if (glyphName === '') {
@@ -2119,7 +2143,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
         if (isName(encoding)) {
           hash.update(encoding.name);
         } else if (isRef(encoding)) {
-          hash.update(encoding.num + '_' + encoding.gen);
+          hash.update(encoding.toString());
         } else if (isDict(encoding)) {
           var keys = encoding.getKeys();
           for (var i = 0, ii = keys.length; i < ii; i++) {
@@ -2127,7 +2151,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
             if (isName(entry)) {
               hash.update(entry.name);
             } else if (isRef(entry)) {
-              hash.update(entry.num + '_' + entry.gen);
+              hash.update(entry.toString());
             } else if (isArray(entry)) { // 'Differences' entry.
               // Ideally we should check the contents of the array, but to avoid
               // parsing it here and then again in |extractDataStructures|,
@@ -2226,7 +2250,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
 
       // According to the spec if 'FontDescriptor' is declared, 'FirstChar',
       // 'LastChar' and 'Widths' should exist too, but some PDF encoders seem
-      // to ignore this rule when a variant of a standart font is used.
+      // to ignore this rule when a variant of a standard font is used.
       // TODO Fill the width array depending on which of the base font this is
       // a variant.
       var firstChar = (dict.get('FirstChar') || 0);
