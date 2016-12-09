@@ -38,7 +38,7 @@ Cu.import('resource://gre/modules/Services.jsm');
 Cu.import('resource://gre/modules/NetUtil.jsm');
 
 XPCOMUtils.defineLazyModuleGetter(this, 'NetworkManager',
-  'resource://pdf.js/network.js');
+  'resource://pdf.js/PdfJsNetwork.jsm');
 
 XPCOMUtils.defineLazyModuleGetter(this, 'PrivateBrowsingUtils',
   'resource://gre/modules/PrivateBrowsingUtils.jsm');
@@ -970,6 +970,8 @@ PdfStreamConverter.prototype = {
       aRequest.setResponseHeader('Content-Security-Policy', '', false);
       aRequest.setResponseHeader('Content-Security-Policy-Report-Only', '',
                                  false);
+      // The viewer does not need to handle HTTP Refresh header.
+      aRequest.setResponseHeader('Refresh', '', false);
     }
 
     PdfJsTelemetry.onViewerIsUsed();

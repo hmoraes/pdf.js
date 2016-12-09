@@ -1,4 +1,4 @@
-/* Copyright 2014 Mozilla Foundation
+/* Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,44 +17,67 @@
 
 'use strict';
 
+if (!PDFJS.PDFViewer || !PDFJS.getDocument) {
+  alert('Please build the pdfjs-dist library using\n' +
+        '  `gulp dist`');
+}
+
 PDFJS.useOnlyCssZoom = true;
 PDFJS.disableTextLayer = true;
 PDFJS.maxImageSize = 1024 * 1024;
-PDFJS.workerSrc = '../pdfjs-components/build/pdf.worker.js';
-PDFJS.cMapUrl = '../pdfjs-components/cmaps/';
+PDFJS.workerSrc = '../../build/dist/build/pdf.worker.js';
+PDFJS.cMapUrl = '../../build/dist/cmaps/';
 PDFJS.cMapPacked = true;
 
+var DEFAULT_URL = '../../web/compressed.tracemonkey-pldi-09.pdf';
 var DEFAULT_SCALE_DELTA = 1.1;
 var MIN_SCALE = 0.25;
 var MAX_SCALE = 10.0;
 var DEFAULT_SCALE_VALUE = 'auto';
 
 var PDFViewerApplication = {
+  pdfLoadingTask: null,
   pdfDocument: null,
   pdfViewer: null,
   pdfHistory: null,
   pdfLinkService: null,
 
+  /**
+   * Opens PDF document specified by URL.
+   * @returns {Promise} - Returns the promise, which is resolved when document
+   *                      is opened.
+   */
   open: function (params) {
-    var url = params.url, originalUrl = params.originalUrl;
+    if (this.pdfLoadingTask) {
+      // We need to destroy already opened document
+      return this.close().then(function () {
+        // ... and repeat the open() call.
+        return this.open(params);
+      }.bind(this));
+    }
+
+    var url = params.url;
     var self = this;
-    this.setTitleUsingUrl(originalUrl);
+    this.setTitleUsingUrl(url);
 
     // Loading document.
     var loadingTask = PDFJS.getDocument(url);
+    this.pdfLoadingTask = loadingTask;
+
     loadingTask.onProgress = function (progressData) {
       self.progress(progressData.loaded / progressData.total);
     };
-    loadingTask.then(function (pdfDocument) {
-      // Document loaded, specifying document for the viewer.
-      this.pdfDocument = pdfDocument;
-      this.pdfViewer.setDocument(pdfDocument);
-      this.pdfLinkService.setDocument(pdfDocument);
-      this.pdfHistory.initialize(pdfDocument.fingerprint);
 
-      this.loadingBar.hide();
-      this.setTitleUsingMetadata(pdfDocument);
-    }.bind(this), function (exception) {
+    return loadingTask.promise.then(function (pdfDocument) {
+      // Document loaded, specifying document for the viewer.
+      self.pdfDocument = pdfDocument;
+      self.pdfViewer.setDocument(pdfDocument);
+      self.pdfLinkService.setDocument(pdfDocument);
+      self.pdfHistory.initialize(pdfDocument.fingerprint);
+
+      self.loadingBar.hide();
+      self.setTitleUsingMetadata(pdfDocument);
+    }, function (exception) {
       var message = exception && exception.message;
       var loadingErrorMessage = mozL10n.get('loading_error', null,
         'An error occurred while loading the PDF.');
@@ -78,6 +101,32 @@ var PDFViewerApplication = {
       self.error(loadingErrorMessage, moreInfo);
       self.loadingBar.hide();
     });
+  },
+
+  /**
+   * Closes opened PDF document.
+   * @returns {Promise} - Returns the promise, which is resolved when all
+   *                      destruction is completed.
+   */
+  close: function () {
+    var errorWrapper = document.getElementById('errorWrapper');
+    errorWrapper.setAttribute('hidden', 'true');
+
+    if (!this.pdfLoadingTask) {
+      return Promise.resolve();
+    }
+
+    var promise = this.pdfLoadingTask.destroy();
+    this.pdfLoadingTask = null;
+
+    if (this.pdfDocument) {
+      this.pdfDocument = null;
+
+      this.pdfViewer.setDocument(null);
+      this.pdfLinkService.setDocument(null, null);
+    }
+
+    return promise;
   },
 
   get loadingBar() {
@@ -134,7 +183,7 @@ var PDFViewerApplication = {
 
   setTitle: function pdfViewSetTitle(title) {
     document.title = title;
-    document.getElementById('activityTitle').textContent = title;
+    document.getElementById('title').textContent = title;
   },
 
   error: function pdfViewError(message, moreInfo) {
@@ -273,10 +322,11 @@ var PDFViewerApplication = {
 
     document.getElementById('pageNumber').addEventListener('change',
         function() {
-      // Handle the user inputting a floating point number.
       PDFViewerApplication.page = (this.value | 0);
 
-      if (this.value !== (this.value | 0).toString()) {
+      // Ensure that the page number input displays the correct value, even if the
+      // value entered by the user was invalid (e.g. a floating point number).
+      if (this.value !== PDFViewerApplication.page.toString()) {
         this.value = PDFViewerApplication.page;
       }
     });
@@ -288,11 +338,9 @@ var PDFViewerApplication = {
 
     container.addEventListener('pagechange', function (evt) {
       var page = evt.pageNumber;
-      if (evt.previousPageNumber !== page) {
-        document.getElementById('pageNumber').value = page;
-      }
       var numPages = PDFViewerApplication.pagesCount;
 
+      document.getElementById('pageNumber').value = page;
       document.getElementById('previous').disabled = (page <= 1);
       document.getElementById('next').disabled = (page >= numPages);
     }, true);
@@ -312,38 +360,9 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 })();
 
-// Support of the new version of navigator.mozL10n -- in PDF.js older/custom
-// version is used.
-var mozL10n = {
-  get: function (id, args, fallback) {
-    var s = (navigator.mozL10n && navigator.mozL10n.get(id)) || fallback;
-    s = s.replace(/\{\{\s*(\w+)\s*\}\}/g, function (all, key) {
-      return args[key] || '';
-    });
-    return s;
-  },
-
-  translate: function (fragment) {
-    if (navigator.mozL10n) {
-      navigator.mozL10n.translateFragment(fragment);
-    }
-  }
-};
-
-window.navigator.mozSetMessageHandler('activity', function(activity) {
-  var blob = activity.source.data.blob;
-  var fileURL = activity.source.data.url ||
-                activity.source.data.filename ||
-                ' '; // if no url or filename, use a non-empty string
-
-  var url = URL.createObjectURL(blob);
-  // We need to delay opening until all HTML is loaded.
-  PDFViewerApplication.animationStartedPromise.then(function () {
-    PDFViewerApplication.open({url: url, originalUrl: fileURL});
-
-    var header = document.getElementById('header');
-    header.addEventListener('action', function() {
-      activity.postResult('close');
-    });
+// We need to delay opening until all HTML is loaded.
+PDFViewerApplication.animationStartedPromise.then(function () {
+  PDFViewerApplication.open({
+    url: DEFAULT_URL
   });
 });
