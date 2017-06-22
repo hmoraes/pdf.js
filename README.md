@@ -9,17 +9,15 @@ rendering PDFs.
 ## Contributing
 
 PDF.js is an open source project and always looking for more contributors. To
-get involved checkout:
+get involved, visit:
 
 + [Issue Reporting Guide](https://github.com/mozilla/pdf.js/blob/master/.github/CONTRIBUTING.md)
 + [Code Contribution Guide](https://github.com/mozilla/pdf.js/wiki/Contributing)
 + [Frequently Asked Questions](https://github.com/mozilla/pdf.js/wiki/Frequently-Asked-Questions)
 + [Good Beginner Bugs](https://github.com/mozilla/pdf.js/issues?direction=desc&labels=5-good-beginner-bug&page=1&sort=created&state=open)
-+ [Priorities](https://github.com/mozilla/pdf.js/milestones)
-+ [Attend a Public Meeting](https://github.com/mozilla/pdf.js/wiki/Weekly-Public-Meetings)
++ [Projects](https://github.com/mozilla/pdf.js/projects)
 
-For further questions or guidance feel free to stop by #pdfjs on
-irc.mozilla.org.
+Feel free to stop by #pdfjs on irc.mozilla.org for questions or guidance.
 
 ## Getting Started
 
@@ -79,16 +77,14 @@ It is also possible to view all test PDF files on the right side by opening
 
 ## Building PDF.js
 
-In order to bundle all `src/` files into two productions scripts and build the generic
-viewer, issue:
+In order to bundle all `src/` files into two production scripts and build the generic
+viewer, run:
 
     $ gulp generic
 
 This will generate `pdf.js` and `pdf.worker.js` in the `build/generic/build/` directory.
 Both scripts are needed but only `pdf.js` needs to be included since `pdf.worker.js` will
-be loaded by `pdf.js`. If you want to support more browsers than Firefox you'll also need
-to include `compatibility.js` from `build/generic/web/`. The PDF.js files are large and
-should be minified for production.
+be loaded by `pdf.js`. The PDF.js files are large and should be minified for production.
 
 ## Using PDF.js in a web application
 
@@ -99,27 +95,23 @@ the `pdfjs-dist` name. For more information and examples please refer to the
 
 ## Learning
 
-You can play with the PDF.js API directly from your browser through the live
+You can play with the PDF.js API directly from your browser using the live
 demos below:
 
-+ [Hello world](http://mozilla.github.io/pdf.js/examples/learning/helloworld.html)
-+ [Simple reader with prev/next page controls](http://mozilla.github.io/pdf.js/examples/learning/prevnext.html)
++ [Interactive examples](http://mozilla.github.io/pdf.js/examples/index.html#interactive-examples)
 
-The repo contains a hello world example that you can run locally:
+The repository contains a hello world example that you can run locally:
 
 + [examples/helloworld/](https://github.com/mozilla/pdf.js/blob/master/examples/helloworld/)
+
+More examples can be found at the examples folder. Some of them are using the pdfjs-dist package, which can be built and installed in this repo directory via `gulp dist-install` command.
 
 For an introduction to the PDF.js code, check out the presentation by our
 contributor Julian Viereck:
 
 + http://www.youtube.com/watch?v=Iv15UY-4Fg8
 
-You can read more about PDF.js here:
-
-+ http://andreasgal.com/2011/06/15/pdf-js/
-+ http://blog.mozilla.com/cjones/2011/06/15/overview-of-pdf-js-guts/
-
-Even more learning resources can be found at:
+More learning resources can be found at:
 
 + https://github.com/mozilla/pdf.js/wiki/Additional-Learning-Resources
 
@@ -133,19 +125,10 @@ Talk to us on IRC:
 
 + #pdfjs on irc.mozilla.org
 
-Join our mailing list:
+File an issue:
 
-+ dev-pdf-js@lists.mozilla.org
-
-Subscribe either using lists.mozilla.org or Google Groups:
-
-+ https://lists.mozilla.org/listinfo/dev-pdf-js
-+ https://groups.google.com/group/mozilla.dev.pdf-js/topics
++ https://github.com/mozilla/pdf.js/issues/new
 
 Follow us on twitter: @pdfjs
 
 + http://twitter.com/#!/pdfjs
-
-Weekly Public Meetings
-
-+ https://github.com/mozilla/pdf.js/wiki/Weekly-Public-Meetings

@@ -1,8 +1,23 @@
-/* globals describe, it, expect, beforeAll, afterAll, beforeEach, afterEach,
-           Stream, CFFParser, SEAC_ANALYSIS_ENABLED, CFFIndex, CFFStrings,
-           CFFCompiler */
+/* Copyright 2017 Mozilla Foundation
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
-'use strict';
+import {
+  CFFCompiler, CFFIndex, CFFParser, CFFStrings
+} from '../../src/core/cff_parser';
+import { SEAC_ANALYSIS_ENABLED } from '../../src/core/fonts';
+import { Stream } from '../../src/core/stream';
 
 describe('CFFParser', function() {
   function createWithNullProto(obj) {
@@ -157,7 +172,7 @@ describe('CFFParser', function() {
   it('parses a CharString endchar with 4 args w/seac enabled', function() {
     var parser = new CFFParser(fontData, {},
                                /* seacAnalysisEnabled = */ true);
-    var cff = parser.parse();
+    parser.parse(); // cff
 
     var bytes = new Uint8Array([0, 1, // count
                                 1,  // offsetSize
@@ -179,7 +194,7 @@ describe('CFFParser', function() {
   it('parses a CharString endchar with 4 args w/seac disabled', function() {
     var parser = new CFFParser(fontData, {},
                                /* seacAnalysisEnabled = */ false);
-    var cff = parser.parse();
+    parser.parse(); // cff
 
     var bytes = new Uint8Array([0, 1, // count
                                 1,  // offsetSize
@@ -268,7 +283,7 @@ describe('CFFParser', function() {
                               ]);
     parser.bytes = bytes;
     var encoding = parser.parseEncoding(2, {}, new CFFStrings(), null);
-    expect(encoding.encoding).toEqual(createWithNullProto({0x8: 1}));
+    expect(encoding.encoding).toEqual(createWithNullProto({ 0x8: 1, }));
   });
 
   it('parses encoding format 1', function() {
@@ -282,7 +297,7 @@ describe('CFFParser', function() {
     parser.bytes = bytes;
     var encoding = parser.parseEncoding(2, {}, new CFFStrings(), null);
     expect(encoding.encoding).toEqual(
-      createWithNullProto({0x7: 0x01, 0x08: 0x02}));
+      createWithNullProto({ 0x7: 0x01, 0x08: 0x02, }));
   });
 
   it('parses fdselect format 0', function() {

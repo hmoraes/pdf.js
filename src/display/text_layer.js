@@ -12,26 +12,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* globals WeakMap */
 
-'use strict';
-
-(function (root, factory) {
-  if (typeof define === 'function' && define.amd) {
-    define('pdfjs/display/text_layer', ['exports', 'pdfjs/shared/util',
-      'pdfjs/display/dom_utils'], factory);
-  } else if (typeof exports !== 'undefined') {
-    factory(exports, require('../shared/util.js'), require('./dom_utils.js'));
-  } else {
-    factory((root.pdfjsDisplayTextLayer = {}), root.pdfjsSharedUtil,
-      root.pdfjsDisplayDOMUtils);
-  }
-}(this, function (exports, sharedUtil, displayDOMUtils) {
-
-var Util = sharedUtil.Util;
-var createPromiseCapability = sharedUtil.createPromiseCapability;
-var CustomStyle = displayDOMUtils.CustomStyle;
-var getDefaultSetting = displayDOMUtils.getDefaultSetting;
+import { createPromiseCapability, Util } from '../shared/util';
+import { CustomStyle, getDefaultSetting } from './dom_utils';
 
 /**
  * Text layer render parameters.
@@ -165,7 +148,7 @@ var renderTextLayer = (function renderTextLayerClosure() {
         bottom: b[3],
         div: textDiv,
         size: [divWidth, divHeight],
-        m: m
+        m,
       });
     }
   }
@@ -187,12 +170,13 @@ var renderTextLayer = (function renderTextLayerClosure() {
       return;
     }
 
+    // The temporary canvas is used to measure text length in the DOM.
     var canvas = document.createElement('canvas');
     if (typeof PDFJSDev === 'undefined' ||
         PDFJSDev.test('FIREFOX || MOZCENTRAL || GENERIC')) {
        canvas.mozOpaque = true;
     }
-    var ctx = canvas.getContext('2d', {alpha: false});
+    var ctx = canvas.getContext('2d', { alpha: false, });
 
     var lastFontSize;
     var lastFontFamily;
@@ -309,7 +293,7 @@ var renderTextLayer = (function renderTextLayerClosure() {
         y2: box.bottom,
         index: i,
         x1New: undefined,
-        x2New: undefined
+        x2New: undefined,
       };
     });
     expandBoundsLTR(width, bounds);
@@ -320,7 +304,7 @@ var renderTextLayer = (function renderTextLayerClosure() {
         left: b.x1New,
         top: 0,
         right: b.x2New,
-        bottom: 0
+        bottom: 0,
       };
     });
 
@@ -348,7 +332,9 @@ var renderTextLayer = (function renderTextLayerClosure() {
 
   function expandBoundsLTR(width, bounds) {
     // Sorting by x1 coordinate and walk by the bounds in the same order.
-    bounds.sort(function (a, b) { return a.x1 - b.x1 || a.index - b.index; });
+    bounds.sort(function (a, b) {
+      return a.x1 - b.x1 || a.index - b.index;
+    });
 
     // First we see on the horizon is a fake boundary.
     var fakeBoundary = {
@@ -358,12 +344,12 @@ var renderTextLayer = (function renderTextLayerClosure() {
       y2: Infinity,
       index: -1,
       x1New: 0,
-      x2New: 0
+      x2New: 0,
     };
     var horizon = [{
       start: -Infinity,
       end: Infinity,
-      boundary: fakeBoundary
+      boundary: fakeBoundary,
     }];
 
     bounds.forEach(function (boundary) {
@@ -374,7 +360,7 @@ var renderTextLayer = (function renderTextLayerClosure() {
         i++;
       }
       var j = horizon.length - 1;
-      while(j >= 0 && horizon[j].start >= boundary.y2) {
+      while (j >= 0 && horizon[j].start >= boundary.y2) {
         j--;
       }
 
@@ -442,7 +428,7 @@ var renderTextLayer = (function renderTextLayerClosure() {
           changedHorizon.push({
             start: horizonPart.start,
             end: horizonPart.end,
-            boundary: useBoundary
+            boundary: useBoundary,
           });
           lastBoundary = useBoundary;
         }
@@ -452,7 +438,7 @@ var renderTextLayer = (function renderTextLayerClosure() {
         changedHorizon.unshift({
           start: horizon[i].start,
           end: boundary.y1,
-          boundary: horizon[i].boundary
+          boundary: horizon[i].boundary,
         });
       }
       if (boundary.y2 < horizon[j].end) {
@@ -460,7 +446,7 @@ var renderTextLayer = (function renderTextLayerClosure() {
         changedHorizon.push({
           start: boundary.y2,
           end: horizon[j].end,
-          boundary: horizon[j].boundary
+          boundary: horizon[j].boundary,
         });
       }
 
@@ -551,10 +537,9 @@ var renderTextLayer = (function renderTextLayerClosure() {
       if (!timeout) { // Render right away
         render(this);
       } else { // Schedule
-        var self = this;
-        this._renderTimer = setTimeout(function() {
-          render(self);
-          self._renderTimer = null;
+        this._renderTimer = setTimeout(() => {
+          render(this);
+          this._renderTimer = null;
         }, timeout);
       }
     },
@@ -637,5 +622,6 @@ var renderTextLayer = (function renderTextLayerClosure() {
   return renderTextLayer;
 })();
 
-exports.renderTextLayer = renderTextLayer;
-}));
+export {
+  renderTextLayer,
+};

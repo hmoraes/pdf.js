@@ -13,33 +13,22 @@
  * limitations under the License.
  */
 
-'use strict';
+import {
+  createObjectURL, FONT_IDENTITY_MATRIX, IDENTITY_MATRIX, ImageKind, isArray,
+  isNum, OPS, Util, warn
+} from '../shared/util';
 
-(function (root, factory) {
-  if (typeof define === 'function' && define.amd) {
-    define('pdfjs/display/svg', ['exports', 'pdfjs/shared/util'], factory);
-  } else if (typeof exports !== 'undefined') {
-    factory(exports, require('../shared/util.js'));
-  } else {
-    factory((root.pdfjsDisplaySVG = {}), root.pdfjsSharedUtil);
-  }
-}(this, function (exports, sharedUtil) {
+var SVGGraphics = function() {
+  throw new Error('Not implemented: SVGGraphics');
+};
+
 if (typeof PDFJSDev === 'undefined' ||
     PDFJSDev.test('GENERIC || SINGLE_FILE')) {
-var FONT_IDENTITY_MATRIX = sharedUtil.FONT_IDENTITY_MATRIX;
-var IDENTITY_MATRIX = sharedUtil.IDENTITY_MATRIX;
-var ImageKind = sharedUtil.ImageKind;
-var OPS = sharedUtil.OPS;
-var Util = sharedUtil.Util;
-var isNum = sharedUtil.isNum;
-var isArray = sharedUtil.isArray;
-var warn = sharedUtil.warn;
-var createObjectURL = sharedUtil.createObjectURL;
 
 var SVG_DEFAULTS = {
   fontStyle: 'normal',
   fontWeight: 'normal',
-  fillColor: '#000000'
+  fillColor: '#000000',
 };
 
 var convertImgDataToPng = (function convertImgDataToPngClosure() {
@@ -288,12 +277,12 @@ var SVGExtraState = (function SVGExtraStateClosure() {
     setCurrentPoint: function SVGExtraState_setCurrentPoint(x, y) {
       this.x = x;
       this.y = y;
-    }
+    },
   };
   return SVGExtraState;
 })();
 
-var SVGGraphics = (function SVGGraphicsClosure() {
+SVGGraphics = (function SVGGraphicsClosure() {
   function opListToTree(opList) {
     var opTree = [];
     var tmp = [];
@@ -301,7 +290,7 @@ var SVGGraphics = (function SVGGraphicsClosure() {
 
     for (var x = 0; x < opListLen; x++) {
       if (opList[x].fn === 'save') {
-        opTree.push({'fnId': 92, 'fn': 'group', 'items': []});
+        opTree.push({ 'fnId': 92, 'fn': 'group', 'items': [], });
         tmp.push(opTree);
         opTree = opTree[opTree.length - 1].items;
         continue;
@@ -372,6 +361,7 @@ var SVGGraphics = (function SVGGraphicsClosure() {
     this.extraStack = [];
     this.commonObjs = commonObjs;
     this.objs = objs;
+    this.pendingClip = null;
     this.pendingEOFill = false;
 
     this.embedFonts = false;
@@ -400,6 +390,7 @@ var SVGGraphics = (function SVGGraphicsClosure() {
       this.transformMatrix = this.transformStack.pop();
       this.current = this.extraStack.pop();
 
+      this.pendingClip = null;
       this.tgrp = null;
     },
 
@@ -414,7 +405,6 @@ var SVGGraphics = (function SVGGraphicsClosure() {
       var fnArrayLen = fnArray.length;
       var argsArray = operatorList.argsArray;
 
-      var self = this;
       for (var i = 0; i < fnArrayLen; i++) {
         if (OPS.dependency === fnArray[i]) {
           var deps = argsArray[i];
@@ -423,12 +413,12 @@ var SVGGraphics = (function SVGGraphicsClosure() {
             var common = obj.substring(0, 2) === 'g_';
             var promise;
             if (common) {
-              promise = new Promise(function(resolve) {
-                self.commonObjs.get(obj, resolve);
+              promise = new Promise((resolve) => {
+                this.commonObjs.get(obj, resolve);
               });
             } else {
-              promise = new Promise(function(resolve) {
-                self.objs.get(obj, resolve);
+              promise = new Promise((resolve) => {
+                this.objs.get(obj, resolve);
               });
             }
             this.current.dependencies.push(promise);
@@ -449,18 +439,18 @@ var SVGGraphics = (function SVGGraphicsClosure() {
       this.viewport = viewport;
 
       var svgElement = this._initialize(viewport);
-      return this.loadDependencies(operatorList).then(function () {
+      return this.loadDependencies(operatorList).then(() => {
         this.transformMatrix = IDENTITY_MATRIX;
         var opTree = this.convertOpList(operatorList);
         this.executeOpTree(opTree);
         return svgElement;
-      }.bind(this));
+      });
     },
 
     convertOpList: function SVGGraphics_convertOpList(operatorList) {
       var argsArray = operatorList.argsArray;
       var fnArray = operatorList.fnArray;
-      var fnArrayLen  = fnArray.length;
+      var fnArrayLen = fnArray.length;
       var REVOPS = [];
       var opList = [];
 
@@ -470,7 +460,11 @@ var SVGGraphics = (function SVGGraphicsClosure() {
 
       for (var x = 0; x < fnArrayLen; x++) {
         var fnId = fnArray[x];
-        opList.push({'fnId': fnId, 'fn': REVOPS[fnId], 'args': argsArray[x]});
+        opList.push({
+          'fnId': fnId,
+          'fn': REVOPS[fnId],
+          'args': argsArray[x],
+        });
       }
       return opListToTree(opList);
     },
@@ -704,7 +698,8 @@ var SVGGraphics = (function SVGGraphicsClosure() {
 
         var width = glyph.width;
         var character = glyph.fontChar;
-        var charWidth = width * widthAdvanceScale + charSpacing * fontDirection;
+        var spacing = (glyph.isSpace ? wordSpacing : 0) + charSpacing;
+        var charWidth = width * widthAdvanceScale + spacing * fontDirection;
         x += charWidth;
 
         current.tspan.textContent += character;
@@ -841,7 +836,7 @@ var SVGGraphics = (function SVGGraphicsClosure() {
             var height = args[j++];
             var xw = x + width;
             var yh = y + height;
-            d.push('M', pf(x), pf(y), 'L', pf(xw) , pf(y), 'L', pf(xw), pf(yh),
+            d.push('M', pf(x), pf(y), 'L', pf(xw), pf(y), 'L', pf(xw), pf(yh),
                    'L', pf(x), pf(yh), 'Z');
             break;
           case OPS.moveTo:
@@ -852,7 +847,7 @@ var SVGGraphics = (function SVGGraphicsClosure() {
           case OPS.lineTo:
             x = args[j++];
             y = args[j++];
-            d.push('L', pf(x) , pf(y));
+            d.push('L', pf(x), pf(y));
             break;
           case OPS.curveTo:
             x = args[j + 4];
@@ -901,9 +896,10 @@ var SVGGraphics = (function SVGGraphicsClosure() {
       current.setCurrentPoint(x, y);
     },
 
-    endPath: function SVGGraphics_endPath() {},
-
-    clip: function SVGGraphics_clip(type) {
+    endPath: function SVGGraphics_endPath() {
+      if (!this.pendingClip) {
+        return;
+      }
       var current = this.current;
       // Add current path to clipping path
       var clipId = 'clippath' + clipCount;
@@ -912,17 +908,18 @@ var SVGGraphics = (function SVGGraphicsClosure() {
       clipPath.setAttributeNS(null, 'id', clipId);
       clipPath.setAttributeNS(null, 'transform', pm(this.transformMatrix));
       var clipElement = current.element.cloneNode();
-      if (type === 'evenodd') {
+      if (this.pendingClip === 'evenodd') {
         clipElement.setAttributeNS(null, 'clip-rule', 'evenodd');
       } else {
         clipElement.setAttributeNS(null, 'clip-rule', 'nonzero');
       }
+      this.pendingClip = null;
       clipPath.appendChild(clipElement);
       this.defs.appendChild(clipPath);
 
       if (current.activeClipUrl) {
         // The previous clipping group content can go out of order -- resetting
-        // cached clipGroup's.
+        // cached clipGroups.
         current.clipGroup = null;
         this.extraStack.forEach(function (prev) {
           prev.clipGroup = null;
@@ -931,6 +928,10 @@ var SVGGraphics = (function SVGGraphicsClosure() {
       current.activeClipUrl = 'url(#' + clipId + ')';
 
       this.tgrp = null;
+    },
+
+    clip: function SVGGraphics_clip(type) {
+      this.pendingClip = type;
     },
 
     closePath: function SVGGraphics_closePath() {
@@ -1040,8 +1041,8 @@ var SVGGraphics = (function SVGGraphicsClosure() {
       var imgObj = this.objs.get(objId);
       var imgEl = document.createElementNS(NS, 'svg:image');
       imgEl.setAttributeNS(XLINK_NS, 'xlink:href', imgObj.src);
-      imgEl.setAttributeNS(null, 'width', imgObj.width + 'px');
-      imgEl.setAttributeNS(null, 'height', imgObj.height + 'px');
+      imgEl.setAttributeNS(null, 'width', pf(w));
+      imgEl.setAttributeNS(null, 'height', pf(h));
       imgEl.setAttributeNS(null, 'x', '0');
       imgEl.setAttributeNS(null, 'y', pf(-h));
       imgEl.setAttributeNS(null, 'transform',
@@ -1198,11 +1199,13 @@ var SVGGraphics = (function SVGGraphicsClosure() {
         }
       }
       return this.tgrp;
-    }
+    },
   };
   return SVGGraphics;
 })();
 
-exports.SVGGraphics = SVGGraphics;
 }
-}));
+
+export {
+  SVGGraphics,
+};

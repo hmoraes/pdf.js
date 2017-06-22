@@ -13,17 +13,7 @@
  * limitations under the License.
  */
 
-'use strict';
-
-(function (root, factory) {
-  if (typeof define === 'function' && define.amd) {
-    define('pdfjs-web/ui_utils', ['exports', 'pdfjs-web/pdfjs'], factory);
-  } else if (typeof exports !== 'undefined') {
-    factory(exports, require('./pdfjs.js'));
-  } else {
-    factory((root.pdfjsWebUIUtils = {}), root.pdfjsWebPDFJS);
-  }
-}(this, function (exports, pdfjsLib) {
+import { PDFJS } from 'pdfjs-lib';
 
 var CSS_UNITS = 96.0 / 72.0;
 var DEFAULT_SCALE_VALUE = 'auto';
@@ -40,9 +30,29 @@ var RendererType = {
   SVG: 'svg',
 };
 
-var mozL10n = document.mozL10n || document.webL10n;
+// Replaces {{arguments}} with their values.
+function formatL10nValue(text, args) {
+  if (!args) {
+    return text;
+  }
+  return text.replace(/\{\{\s*(\w+)\s*\}\}/g, (all, name) => {
+    return (name in args ? args[name] : '{{' + name + '}}');
+  });
+}
 
-var PDFJS = pdfjsLib.PDFJS;
+/**
+ * No-op implemetation of the localization service.
+ * @implements {IL10n}
+ */
+var NullL10n = {
+  get(property, args, fallback) {
+    return Promise.resolve(formatL10nValue(fallback, args));
+  },
+
+  translate(element) {
+    return Promise.resolve();
+  },
+};
 
 /**
  * Disables fullscreen support, and by extension Presentation Mode,
@@ -93,8 +103,9 @@ if (typeof PDFJSDev === 'undefined' ||
    * Interface locale settings.
    * @var {string}
    */
-  PDFJS.locale = (PDFJS.locale === undefined ? navigator.language :
-    PDFJS.locale);
+  PDFJS.locale =
+    (PDFJS.locale === undefined && typeof navigator !== 'undefined' ?
+     navigator.language : PDFJS.locale);
 }
 
 /**
@@ -114,7 +125,7 @@ function getOutputScale(ctx) {
   return {
     sx: pixelRatio,
     sy: pixelRatio,
-    scaled: pixelRatio !== 1
+    scaled: pixelRatio !== 1,
   };
 }
 
@@ -189,7 +200,7 @@ function watchScroll(viewAreaElement, callback) {
   var state = {
     down: true,
     lastY: viewAreaElement.scrollTop,
-    _eventHandler: debounceScroll
+    _eventHandler: debounceScroll,
   };
 
   var rAF = null;
@@ -260,7 +271,7 @@ function approximateFraction(x) {
   var limit = 8;
   if (xinv > limit) {
     return [1, limit];
-  } else  if (Math.floor(xinv) === xinv) {
+  } else if (Math.floor(xinv) === xinv) {
     return [1, xinv];
   }
 
@@ -280,12 +291,14 @@ function approximateFraction(x) {
       a = p; b = q;
     }
   }
+  var result;
   // Select closest of the neighbours to x.
   if (x_ - a / b < c / d - x_) {
-    return x_ === x ? [a, b] : [b, a];
+    result = x_ === x ? [a, b] : [b, a];
   } else {
-    return x_ === x ? [c, d] : [d, c];
+    result = x_ === x ? [c, d] : [d, c];
   }
+  return result;
 }
 
 function roundToDivide(x, div) {
@@ -336,8 +349,8 @@ function getVisibleElements(scrollEl, views, sortByVisibility) {
       id: view.id,
       x: currentWidth,
       y: currentHeight,
-      view: view,
-      percent: percentHeight
+      view,
+      percent: percentHeight,
     });
   }
 
@@ -353,7 +366,7 @@ function getVisibleElements(scrollEl, views, sortByVisibility) {
       return a.id - b.id; // ensure stability
     });
   }
-  return {first: first, last: last, views: visible};
+  return { first, last, views: visible, };
 }
 
 /**
@@ -363,20 +376,35 @@ function noContextMenuHandler(e) {
   e.preventDefault();
 }
 
+function isDataSchema(url) {
+  var i = 0, ii = url.length;
+  while (i < ii && url[i].trim() === '') {
+    i++;
+  }
+  return url.substr(i, 5).toLowerCase() === 'data:';
+}
+
 /**
  * Returns the filename or guessed filename from the url (see issue 3455).
- * url {String} The original PDF location.
- * @return {String} Guessed PDF file name.
+ * @param {string} url - The original PDF location.
+ * @param {string} defaultFilename - The value returned if the filename is
+ *   unknown, or the protocol is unsupported.
+ * @returns {string} Guessed PDF filename.
  */
-function getPDFFileNameFromURL(url) {
-  var reURI = /^(?:([^:]+:)?\/\/[^\/]+)?([^?#]*)(\?[^#]*)?(#.*)?$/;
-  //            SCHEME      HOST         1.PATH  2.QUERY   3.REF
+function getPDFFileNameFromURL(url, defaultFilename = 'document.pdf') {
+  if (isDataSchema(url)) {
+    console.warn('getPDFFileNameFromURL: ' +
+                 'ignoring "data:" URL for performance reasons.');
+    return defaultFilename;
+  }
+  var reURI = /^(?:(?:[^:]+:)?\/\/[^\/]+)?([^?#]*)(\?[^#]*)?(#.*)?$/;
+  //            SCHEME        HOST         1.PATH  2.QUERY   3.REF
   // Pattern to get last matching NAME.pdf
   var reFilename = /[^\/?#=]+\.pdf\b(?!.*\.pdf\b)/i;
   var splitURI = reURI.exec(url);
   var suggestedFilename = reFilename.exec(splitURI[1]) ||
-                           reFilename.exec(splitURI[2]) ||
-                           reFilename.exec(splitURI[3]);
+                          reFilename.exec(splitURI[2]) ||
+                          reFilename.exec(splitURI[3]);
   if (suggestedFilename) {
     suggestedFilename = suggestedFilename[0];
     if (suggestedFilename.indexOf('%') !== -1) {
@@ -384,13 +412,13 @@ function getPDFFileNameFromURL(url) {
       try {
         suggestedFilename =
           reFilename.exec(decodeURIComponent(suggestedFilename))[0];
-      } catch(e) { // Possible (extremely rare) errors:
+      } catch (e) { // Possible (extremely rare) errors:
         // URIError "Malformed URI", e.g. for "%AA.pdf"
         // TypeError "null has no properties", e.g. for "%2F.pdf"
       }
     }
   }
-  return suggestedFilename || 'document.pdf';
+  return suggestedFilename || defaultFilename;
 }
 
 function normalizeWheelEventDelta(evt) {
@@ -415,6 +443,16 @@ function normalizeWheelEventDelta(evt) {
   return delta;
 }
 
+function cloneObj(obj) {
+  var result = {};
+  for (var i in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, i)) {
+      result[i] = obj[i];
+    }
+  }
+  return result;
+}
+
 /**
  * Promise that is resolved when DOM window becomes visible.
  */
@@ -423,22 +461,14 @@ var animationStarted = new Promise(function (resolve) {
 });
 
 /**
- * Promise that is resolved when UI localization is finished.
+ * (deprecated) External localization service.
  */
-var localized = new Promise(function (resolve, reject) {
-  if (!mozL10n) {
-    // Resolve as localized even if mozL10n is not available.
-    resolve();
-    return;
-  }
-  if (mozL10n.getReadyState() !== 'loading') {
-    resolve();
-    return;
-  }
-  window.addEventListener('localized', function localized(evt) {
-    resolve();
-  });
-});
+var mozL10n;
+
+/**
+ * (deprecated) Promise that is resolved when UI localization is finished.
+ */
+var localized = Promise.resolve();
 
 /**
  * Simple event bus for an application. Listeners are attached using the
@@ -478,7 +508,7 @@ var EventBus = (function EventBusClosure() {
       eventListeners.slice(0).forEach(function (listener) {
         listener.apply(null, args);
       });
-    }
+    },
   };
   return EventBus;
 })();
@@ -559,36 +589,39 @@ var ProgressBar = (function ProgressBarClosure() {
       this.visible = true;
       document.body.classList.add('loadingInProgress');
       this.bar.classList.remove('hidden');
-    }
+    },
   };
 
   return ProgressBar;
 })();
 
-exports.CSS_UNITS = CSS_UNITS;
-exports.DEFAULT_SCALE_VALUE = DEFAULT_SCALE_VALUE;
-exports.DEFAULT_SCALE = DEFAULT_SCALE;
-exports.MIN_SCALE = MIN_SCALE;
-exports.MAX_SCALE = MAX_SCALE;
-exports.UNKNOWN_SCALE = UNKNOWN_SCALE;
-exports.MAX_AUTO_SCALE = MAX_AUTO_SCALE;
-exports.SCROLLBAR_PADDING = SCROLLBAR_PADDING;
-exports.VERTICAL_PADDING = VERTICAL_PADDING;
-exports.RendererType = RendererType;
-exports.mozL10n = mozL10n;
-exports.EventBus = EventBus;
-exports.ProgressBar = ProgressBar;
-exports.getPDFFileNameFromURL = getPDFFileNameFromURL;
-exports.noContextMenuHandler = noContextMenuHandler;
-exports.parseQueryString = parseQueryString;
-exports.getVisibleElements = getVisibleElements;
-exports.roundToDivide = roundToDivide;
-exports.approximateFraction = approximateFraction;
-exports.getOutputScale = getOutputScale;
-exports.scrollIntoView = scrollIntoView;
-exports.watchScroll = watchScroll;
-exports.binarySearchFirstItem = binarySearchFirstItem;
-exports.normalizeWheelEventDelta = normalizeWheelEventDelta;
-exports.animationStarted = animationStarted;
-exports.localized = localized;
-}));
+export {
+  CSS_UNITS,
+  DEFAULT_SCALE_VALUE,
+  DEFAULT_SCALE,
+  MIN_SCALE,
+  MAX_SCALE,
+  UNKNOWN_SCALE,
+  MAX_AUTO_SCALE,
+  SCROLLBAR_PADDING,
+  VERTICAL_PADDING,
+  cloneObj,
+  RendererType,
+  mozL10n,
+  NullL10n,
+  EventBus,
+  ProgressBar,
+  getPDFFileNameFromURL,
+  noContextMenuHandler,
+  parseQueryString,
+  getVisibleElements,
+  roundToDivide,
+  approximateFraction,
+  getOutputScale,
+  scrollIntoView,
+  watchScroll,
+  binarySearchFirstItem,
+  normalizeWheelEventDelta,
+  animationStarted,
+  localized,
+};

@@ -13,55 +13,17 @@
  * limitations under the License.
  */
 
-'use strict';
-
-(function (root, factory) {
-  if (typeof define === 'function' && define.amd) {
-    define('pdfjs/core/parser', ['exports', 'pdfjs/shared/util',
-      'pdfjs/core/primitives', 'pdfjs/core/stream'], factory);
-  } else if (typeof exports !== 'undefined') {
-    factory(exports, require('../shared/util.js'), require('./primitives.js'),
-      require('./stream.js'));
-  } else {
-    factory((root.pdfjsCoreParser = {}), root.pdfjsSharedUtil,
-      root.pdfjsCorePrimitives, root.pdfjsCoreStream);
-  }
-}(this, function (exports, sharedUtil, corePrimitives, coreStream) {
-
-var MissingDataException = sharedUtil.MissingDataException;
-var StreamType = sharedUtil.StreamType;
-var assert = sharedUtil.assert;
-var error = sharedUtil.error;
-var info = sharedUtil.info;
-var isArray = sharedUtil.isArray;
-var isInt = sharedUtil.isInt;
-var isNum = sharedUtil.isNum;
-var isString = sharedUtil.isString;
-var warn = sharedUtil.warn;
-var Cmd = corePrimitives.Cmd;
-var Dict = corePrimitives.Dict;
-var Name = corePrimitives.Name;
-var Ref = corePrimitives.Ref;
-var isCmd = corePrimitives.isCmd;
-var isDict = corePrimitives.isDict;
-var isName = corePrimitives.isName;
-var Ascii85Stream = coreStream.Ascii85Stream;
-var AsciiHexStream = coreStream.AsciiHexStream;
-var CCITTFaxStream = coreStream.CCITTFaxStream;
-var FlateStream = coreStream.FlateStream;
-var Jbig2Stream = coreStream.Jbig2Stream;
-var JpegStream = coreStream.JpegStream;
-var JpxStream = coreStream.JpxStream;
-var LZWStream = coreStream.LZWStream;
-var NullStream = coreStream.NullStream;
-var PredictorStream = coreStream.PredictorStream;
-var RunLengthStream = coreStream.RunLengthStream;
-
-var EOF = {};
-
-function isEOF(v) {
-  return (v === EOF);
-}
+import {
+  Ascii85Stream, AsciiHexStream, CCITTFaxStream, FlateStream, Jbig2Stream,
+  JpegStream, JpxStream, LZWStream, NullStream, PredictorStream, RunLengthStream
+} from './stream';
+import {
+  assert, error, info, isArray, isInt, isNum, isString, MissingDataException,
+  StreamType, warn
+} from '../shared/util';
+import {
+  Cmd, Dict, EOF, isCmd, isDict, isEOF, isName, Name, Ref
+} from './primitives';
 
 var MAX_LENGTH_TO_CACHE = 1000;
 
@@ -248,29 +210,29 @@ var Parser = (function ParserClosure() {
           case 0xC1: // SOF1
           case 0xC2: // SOF2
           case 0xC3: // SOF3
-
+            /* falls through */
           case 0xC5: // SOF5
           case 0xC6: // SOF6
           case 0xC7: // SOF7
-
+            /* falls through */
           case 0xC9: // SOF9
           case 0xCA: // SOF10
           case 0xCB: // SOF11
-
+            /* falls through */
           case 0xCD: // SOF13
           case 0xCE: // SOF14
           case 0xCF: // SOF15
-
+            /* falls through */
           case 0xC4: // DHT
           case 0xCC: // DAC
-
+            /* falls through */
           case 0xDA: // SOS
           case 0xDB: // DQT
           case 0xDC: // DNL
           case 0xDD: // DRI
           case 0xDE: // DHP
           case 0xDF: // EXP
-
+            /* falls through */
           case 0xE0: // APP0
           case 0xE1: // APP1
           case 0xE2: // APP2
@@ -287,7 +249,7 @@ var Parser = (function ParserClosure() {
           case 0xED: // APP13
           case 0xEE: // APP14
           case 0xEF: // APP15
-
+            /* falls through */
           case 0xFE: // COM
             // The marker should be followed by the length of the segment.
             markerLength = stream.getUint16();
@@ -637,7 +599,7 @@ var Parser = (function ParserClosure() {
         warn('Invalid stream: \"' + ex + '\"');
         return new NullStream(stream);
       }
-    }
+    },
   };
 
   return Parser;
@@ -725,9 +687,14 @@ var Lexer = (function LexerClosure() {
         divideBy = 10;
         ch = this.nextChar();
       }
+      if (ch === 0x0A || ch === 0x0D) { // LF, CR
+        // Ignore line-breaks (this is consistent with Adobe Reader).
+        do {
+          ch = this.nextChar();
+        } while (ch === 0x0A || ch === 0x0D);
+      }
       if (ch < 0x30 || ch > 0x39) { // '0' - '9'
-        error('Invalid number: ' + String.fromCharCode(ch));
-        return 0;
+        error(`Invalid number: ${String.fromCharCode(ch)} (charCode ${ch})`);
       }
 
       var baseValue = ch - 0x30; // '0'
@@ -895,7 +862,7 @@ var Lexer = (function LexerClosure() {
             var x2 = toHexDigit(ch);
             if (x2 === -1) {
               warn('Lexer_getName: Illegal digit (' +
-                   String.fromCharCode(ch) +') in hexadecimal number.');
+                   String.fromCharCode(ch) + ') in hexadecimal number.');
               strBuf.push('#', String.fromCharCode(previousCh));
               if (specialChars[ch]) {
                 break;
@@ -1017,6 +984,11 @@ var Lexer = (function LexerClosure() {
           this.nextChar();
           return Cmd.get('}');
         case 0x29: // ')'
+          // Consume the current character in order to avoid permanently hanging
+          // the worker thread if `Lexer.getObject` is called from within a loop
+          // containing try-catch statements, since we would otherwise attempt
+          // to parse the *same* character over and over (fixes issue8061.pdf).
+          this.nextChar();
           error('Illegal character: ' + ch);
           break;
       }
@@ -1064,7 +1036,7 @@ var Lexer = (function LexerClosure() {
         }
         ch = this.nextChar();
       }
-    }
+    },
   };
 
   return Lexer;
@@ -1108,20 +1080,19 @@ var Linearization = {
                       'does not equal the stream length.');
     }
     return {
-      length: length,
+      length,
       hints: getHints(),
       objectNumberFirst: getInt('O'),
       endFirst: getInt('E'),
       numPages: getInt('N'),
       mainXRefEntriesOffset: getInt('T'),
-      pageFirst: (linDict.has('P') ? getInt('P', true) : 0)
+      pageFirst: (linDict.has('P') ? getInt('P', true) : 0),
     };
-  }
+  },
 };
 
-exports.EOF = EOF;
-exports.Lexer = Lexer;
-exports.Linearization = Linearization;
-exports.Parser = Parser;
-exports.isEOF = isEOF;
-}));
+export {
+  Lexer,
+  Linearization,
+  Parser,
+};

@@ -13,67 +13,31 @@
  * limitations under the License.
  */
 
-'use strict';
-
-(function (root, factory) {
-  if (typeof define === 'function' && define.amd) {
-    define('pdfjs/core/obj', ['exports', 'pdfjs/shared/util',
-      'pdfjs/core/primitives', 'pdfjs/core/crypto', 'pdfjs/core/parser',
-      'pdfjs/core/chunked_stream', 'pdfjs/core/colorspace'], factory);
-  } else if (typeof exports !== 'undefined') {
-    factory(exports, require('../shared/util.js'), require('./primitives.js'),
-      require('./crypto.js'), require('./parser.js'),
-      require('./chunked_stream.js'), require('./colorspace.js'));
-  } else {
-    factory((root.pdfjsCoreObj = {}), root.pdfjsSharedUtil,
-      root.pdfjsCorePrimitives, root.pdfjsCoreCrypto, root.pdfjsCoreParser,
-      root.pdfjsCoreChunkedStream, root.pdfjsCoreColorSpace);
-  }
-}(this, function (exports, sharedUtil, corePrimitives, coreCrypto, coreParser,
-                  coreChunkedStream, coreColorSpace) {
-
-var InvalidPDFException = sharedUtil.InvalidPDFException;
-var MissingDataException = sharedUtil.MissingDataException;
-var XRefParseException = sharedUtil.XRefParseException;
-var assert = sharedUtil.assert;
-var bytesToString = sharedUtil.bytesToString;
-var createPromiseCapability = sharedUtil.createPromiseCapability;
-var error = sharedUtil.error;
-var info = sharedUtil.info;
-var isArray = sharedUtil.isArray;
-var isBool = sharedUtil.isBool;
-var isInt = sharedUtil.isInt;
-var isString = sharedUtil.isString;
-var shadow = sharedUtil.shadow;
-var stringToPDFString = sharedUtil.stringToPDFString;
-var stringToUTF8String = sharedUtil.stringToUTF8String;
-var warn = sharedUtil.warn;
-var createValidAbsoluteUrl = sharedUtil.createValidAbsoluteUrl;
-var Util = sharedUtil.Util;
-var Ref = corePrimitives.Ref;
-var RefSet = corePrimitives.RefSet;
-var RefSetCache = corePrimitives.RefSetCache;
-var isName = corePrimitives.isName;
-var isCmd = corePrimitives.isCmd;
-var isDict = corePrimitives.isDict;
-var isRef = corePrimitives.isRef;
-var isRefsEqual = corePrimitives.isRefsEqual;
-var isStream = corePrimitives.isStream;
-var CipherTransformFactory = coreCrypto.CipherTransformFactory;
-var Lexer = coreParser.Lexer;
-var Parser = coreParser.Parser;
-var ChunkedStream = coreChunkedStream.ChunkedStream;
-var ColorSpace = coreColorSpace.ColorSpace;
+import {
+  assert, bytesToString, createPromiseCapability, createValidAbsoluteUrl, error,
+  info, InvalidPDFException, isArray, isBool, isInt, isString,
+  MissingDataException, shadow, stringToPDFString, stringToUTF8String, Util,
+  warn, XRefParseException
+} from '../shared/util';
+import {
+  Dict, isCmd, isDict, isName, isRef, isRefsEqual, isStream, Ref, RefSet,
+  RefSetCache
+} from './primitives';
+import { Lexer, Parser } from './parser';
+import { ChunkedStream } from './chunked_stream';
+import { CipherTransformFactory } from './crypto';
+import { ColorSpace } from './colorspace';
 
 var Catalog = (function CatalogClosure() {
   function Catalog(pdfManager, xref, pageFactory) {
     this.pdfManager = pdfManager;
     this.xref = xref;
     this.catDict = xref.getCatalogObj();
-    this.fontCache = new RefSetCache();
-    assert(isDict(this.catDict),
-      'catalog object is not a dictionary');
+    assert(isDict(this.catDict), 'catalog object is not a dictionary');
 
+    this.fontCache = new RefSetCache();
+    this.builtInCMapCache = Object.create(null);
+    this.pageKidsCountCache = new RefSetCache();
     // TODO refactor to move getPage() to the PDFDocument.
     this.pageFactory = pageFactory;
     this.pagePromises = [];
@@ -104,6 +68,9 @@ var Catalog = (function CatalogClosure() {
           try {
             metadata = stringToUTF8String(bytesToString(stream.getBytes()));
           } catch (e) {
+            if (e instanceof MissingDataException) {
+              throw e;
+            }
             info('Skipping invalid metadata.');
           }
         }
@@ -138,8 +105,8 @@ var Catalog = (function CatalogClosure() {
       if (!isRef(obj)) {
         return null;
       }
-      var root = { items: [] };
-      var queue = [{obj: obj, parent: root}];
+      var root = { items: [], };
+      var queue = [{ obj, parent: root, }];
       // To avoid recursion, keep track of the already processed items.
       var processed = new RefSet();
       processed.put(obj);
@@ -178,17 +145,17 @@ var Catalog = (function CatalogClosure() {
           count: outlineDict.get('Count'),
           bold: !!(flags & 2),
           italic: !!(flags & 1),
-          items: []
+          items: [],
         };
         i.parent.items.push(outlineItem);
         obj = outlineDict.getRaw('First');
         if (isRef(obj) && !processed.has(obj)) {
-          queue.push({obj: obj, parent: outlineItem});
+          queue.push({ obj, parent: outlineItem, });
           processed.put(obj);
         }
         obj = outlineDict.getRaw('Next');
         if (isRef(obj) && !processed.has(obj)) {
-          queue.push({obj: obj, parent: i.parent});
+          queue.push({ obj, parent: i.parent, });
           processed.put(obj);
         }
       }
@@ -418,29 +385,30 @@ var Catalog = (function CatalogClosure() {
     },
 
     cleanup: function Catalog_cleanup() {
+      this.pageKidsCountCache.clear();
+
       var promises = [];
       this.fontCache.forEach(function (promise) {
         promises.push(promise);
       });
-      return Promise.all(promises).then(function (translatedFonts) {
+      return Promise.all(promises).then((translatedFonts) => {
         for (var i = 0, ii = translatedFonts.length; i < ii; i++) {
           var font = translatedFonts[i].dict;
           delete font.translated;
         }
         this.fontCache.clear();
-      }.bind(this));
+        this.builtInCMapCache = Object.create(null);
+      });
     },
 
     getPage: function Catalog_getPage(pageIndex) {
       if (!(pageIndex in this.pagePromises)) {
         this.pagePromises[pageIndex] = this.getPageDict(pageIndex).then(
-          function (a) {
-            var dict = a[0];
-            var ref = a[1];
-            return this.pageFactory.createPage(pageIndex, dict, ref,
-                                               this.fontCache);
-          }.bind(this)
-        );
+            ([dict, ref]) => {
+          return this.pageFactory.createPage(pageIndex, dict, ref,
+                                             this.fontCache,
+                                             this.builtInCMapCache);
+        });
       }
       return this.pagePromises[pageIndex];
     },
@@ -448,18 +416,30 @@ var Catalog = (function CatalogClosure() {
     getPageDict: function Catalog_getPageDict(pageIndex) {
       var capability = createPromiseCapability();
       var nodesToVisit = [this.catDict.getRaw('Pages')];
-      var currentPageIndex = 0;
-      var xref = this.xref;
-      var checkAllKids = false;
+      var count, currentPageIndex = 0;
+      var xref = this.xref, pageKidsCountCache = this.pageKidsCountCache;
 
       function next() {
         while (nodesToVisit.length) {
           var currentNode = nodesToVisit.pop();
 
           if (isRef(currentNode)) {
+            count = pageKidsCountCache.get(currentNode);
+            // Skip nodes where the page can't be.
+            if (count > 0 && currentPageIndex + count < pageIndex) {
+              currentPageIndex += count;
+              continue;
+            }
+
             xref.fetchAsync(currentNode).then(function (obj) {
               if (isDict(obj, 'Page') || (isDict(obj) && !obj.has('Kids'))) {
                 if (pageIndex === currentPageIndex) {
+                  // Cache the Page reference, since it can *greatly* improve
+                  // performance by reducing redundant lookups in long documents
+                  // where all nodes are found at *one* level of the tree.
+                  if (currentNode && !pageKidsCountCache.has(currentNode)) {
+                    pageKidsCountCache.put(currentNode, 1);
+                  }
                   capability.resolve([obj, currentNode]);
                 } else {
                   currentPageIndex++;
@@ -474,15 +454,15 @@ var Catalog = (function CatalogClosure() {
           }
 
           // Must be a child page dictionary.
-          assert(
-            isDict(currentNode),
-            'page dictionary kid reference points to wrong type of object'
-          );
-          var count = currentNode.get('Count');
-          // If the current node doesn't have any children, avoid getting stuck
-          // in an empty node further down in the tree (see issue5644.pdf).
-          if (count === 0) {
-            checkAllKids = true;
+          assert(isDict(currentNode),
+            'page dictionary kid reference points to wrong type of object');
+
+          count = currentNode.get('Count');
+          // Cache the Kids count, since it can reduce redundant lookups in long
+          // documents where all nodes are found at *one* level of the tree.
+          var objId = currentNode.objId;
+          if (objId && !pageKidsCountCache.has(objId)) {
+            pageKidsCountCache.put(objId, count);
           }
           // Skip nodes where the page can't be.
           if (currentPageIndex + count <= pageIndex) {
@@ -492,21 +472,12 @@ var Catalog = (function CatalogClosure() {
 
           var kids = currentNode.get('Kids');
           assert(isArray(kids), 'page dictionary kids object is not an array');
-          if (!checkAllKids && count === kids.length) {
-            // Nodes that don't have the page have been skipped and this is the
-            // bottom of the tree which means the page requested must be a
-            // descendant of this pages node. Ideally we would just resolve the
-            // promise with the page ref here, but there is the case where more
-            // pages nodes could link to single a page (see issue 3666 pdf). To
-            // handle this push it back on the queue so if it is a pages node it
-            // will be descended into.
-            nodesToVisit = [kids[pageIndex - currentPageIndex]];
-            currentPageIndex = pageIndex;
-            continue;
-          } else {
-            for (var last = kids.length - 1; last >= 0; last--) {
-              nodesToVisit.push(kids[last]);
-            }
+
+          // Always check all `Kids` nodes, to avoid getting stuck in an empty
+          // node further down in the tree (see issue5644.pdf, issue8088.pdf),
+          // and to ensure that we actually find the correct `Page` dict.
+          for (var last = kids.length - 1; last >= 0; last--) {
+            nodesToVisit.push(kids[last]);
           }
         }
         capability.reject('Page index ' + pageIndex + ' not found.');
@@ -585,7 +556,7 @@ var Catalog = (function CatalogClosure() {
       }
 
       return next(pageRef);
-    }
+    },
   };
 
   /**
@@ -674,13 +645,9 @@ var Catalog = (function CatalogClosure() {
               remoteDest = remoteDest.name;
             }
             if (isString(url)) {
-              var baseUrl = url.split('#')[0];
+              let baseUrl = url.split('#')[0];
               if (isString(remoteDest)) {
-                // In practice, a named destination may contain only a number.
-                // If that happens, use the '#nameddest=' form to avoid the link
-                // redirecting to a page, instead of the correct destination.
-                url = baseUrl + '#' +
-                  (/^\d+$/.test(remoteDest) ? 'nameddest=' : '') + remoteDest;
+                url = baseUrl + '#' + remoteDest;
               } else if (isArray(remoteDest)) {
                 url = baseUrl + '#' + JSON.stringify(remoteDest);
               }
@@ -717,12 +684,17 @@ var Catalog = (function CatalogClosure() {
               'app.launchURL',
               'window.open'
             ];
-            var regex = new RegExp('^(?:' + URL_OPEN_METHODS.join('|') + ')' +
-                                   '\\((?:\'|\")(\\S+)(?:\'|\")(?:,|\\))');
+            var regex = new RegExp(
+              '^\\s*(' + URL_OPEN_METHODS.join('|').split('.').join('\\.') +
+              ')\\((?:\'|\")([^\'\"]*)(?:\'|\")(?:,\\s*(\\w+)\\)|\\))', 'i');
 
-            var jsUrl = regex.exec(stringToPDFString(js), 'i');
-            if (jsUrl && jsUrl[1]) {
-              url = jsUrl[1];
+            var jsUrl = regex.exec(stringToPDFString(js));
+            if (jsUrl && jsUrl[2]) {
+              url = jsUrl[2];
+
+              if (jsUrl[3] === 'true' && jsUrl[1] === 'app.launchURL') {
+                resultObj.newWindow = true;
+              }
               break;
             }
           }
@@ -758,16 +730,16 @@ var Catalog = (function CatalogClosure() {
 })();
 
 var XRef = (function XRefClosure() {
-  function XRef(stream, password) {
+  function XRef(stream, pdfManager) {
     this.stream = stream;
+    this.pdfManager = pdfManager;
     this.entries = [];
     this.xrefstms = Object.create(null);
     // prepare the XRef cache
     this.cache = [];
-    this.password = password;
     this.stats = {
       streamTypes: [],
-      fontTypes: []
+      fontTypes: [],
     };
   }
 
@@ -789,7 +761,7 @@ var XRef = (function XRefClosure() {
       trailerDict.assignXref(this);
       this.trailer = trailerDict;
       var encrypt = trailerDict.get('Encrypt');
-      if (encrypt) {
+      if (isDict(encrypt)) {
         var ids = trailerDict.get('ID');
         var fileId = (ids && ids.length) ? ids[0] : '';
         // The 'Encrypt' dictionary itself should not be encrypted, and by
@@ -798,7 +770,7 @@ var XRef = (function XRefClosure() {
         // objects (fixes issue7665.pdf).
         encrypt.suppressEncryption = true;
         this.encrypt = new CipherTransformFactory(encrypt, fileId,
-                                                  this.password);
+                                                  this.pdfManager.password);
       }
 
       // get the root dictionary (catalog) object
@@ -815,7 +787,7 @@ var XRef = (function XRefClosure() {
           entryNum: 0,
           streamPos: parser.lexer.stream.pos,
           parserBuf1: parser.buf1,
-          parserBuf2: parser.buf2
+          parserBuf2: parser.buf2,
         };
       }
 
@@ -945,9 +917,9 @@ var XRef = (function XRefClosure() {
 
         this.streamState = {
           entryRanges: range,
-          byteWidths: byteWidths,
+          byteWidths,
           entryNum: 0,
-          streamPos: stream.pos
+          streamPos: stream.pos,
         };
       }
       this.readXRefStream(stream);
@@ -1099,7 +1071,7 @@ var XRef = (function XRefClosure() {
             this.entries[m[1]] = {
               offset: position - stream.start,
               gen: m[2] | 0,
-              uncompressed: true
+              uncompressed: true,
             };
           }
           var contentLength = skipUntil(buffer, position, endobjBytes) + 7;
@@ -1255,6 +1227,11 @@ var XRef = (function XRefClosure() {
       var num = ref.num;
       if (num in this.cache) {
         var cacheEntry = this.cache[num];
+        // In documents with Object Streams, it's possible that cached `Dict`s
+        // have not been assigned an `objId` yet (see e.g. issue3115r.pdf).
+        if (cacheEntry instanceof Dict && !cacheEntry.objId) {
+          cacheEntry.objId = ref.toString();
+        }
         return cacheEntry;
       }
 
@@ -1392,7 +1369,7 @@ var XRef = (function XRefClosure() {
 
     getCatalogObj: function XRef_getCatalogObj() {
       return this.root;
-    }
+    },
   };
 
   return XRef;
@@ -1513,7 +1490,7 @@ var NameOrNumberTree = (function NameOrNumberTreeClosure() {
         }
       }
       return null;
-    }
+    },
   };
   return NameOrNumberTree;
 })();
@@ -1585,9 +1562,8 @@ var FileSpec = (function FileSpecClosure() {
       return dict.get('Mac');
     } else if (dict.has('DOS')) {
       return dict.get('DOS');
-    } else {
-      return null;
     }
+    return null;
   }
 
   FileSpec.prototype = {
@@ -1626,47 +1602,42 @@ var FileSpec = (function FileSpecClosure() {
     get serializable() {
       return {
         filename: this.filename,
-        content: this.content
+        content: this.content,
       };
-    }
+    },
   };
   return FileSpec;
 })();
 
 /**
- * A helper for loading missing data in object graphs. It traverses the graph
+ * A helper for loading missing data in `Dict` graphs. It traverses the graph
  * depth first and queues up any objects that have missing data. Once it has
  * has traversed as many objects that are available it attempts to bundle the
  * missing data requests and then resume from the nodes that weren't ready.
  *
  * NOTE: It provides protection from circular references by keeping track of
- * of loaded references. However, you must be careful not to load any graphs
+ * loaded references. However, you must be careful not to load any graphs
  * that have references to the catalog or other pages since that will cause the
  * entire PDF document object graph to be traversed.
  */
-var ObjectLoader = (function() {
+let ObjectLoader = (function() {
   function mayHaveChildren(value) {
     return isRef(value) || isDict(value) || isArray(value) || isStream(value);
   }
 
   function addChildren(node, nodesToVisit) {
-    var value;
     if (isDict(node) || isStream(node)) {
-      var map;
-      if (isDict(node)) {
-        map = node.map;
-      } else {
-        map = node.dict.map;
-      }
-      for (var key in map) {
-        value = map[key];
-        if (mayHaveChildren(value)) {
-          nodesToVisit.push(value);
+      let dict = isDict(node) ? node : node.dict;
+      let dictKeys = dict.getKeys();
+      for (let i = 0, ii = dictKeys.length; i < ii; i++) {
+        let rawValue = dict.getRaw(dictKeys[i]);
+        if (mayHaveChildren(rawValue)) {
+          nodesToVisit.push(rawValue);
         }
       }
     } else if (isArray(node)) {
-      for (var i = 0, ii = node.length; i < ii; i++) {
-        value = node[i];
+      for (let i = 0, ii = node.length; i < ii; i++) {
+        let value = node[i];
         if (mayHaveChildren(value)) {
           nodesToVisit.push(value);
         }
@@ -1674,8 +1645,8 @@ var ObjectLoader = (function() {
     }
   }
 
-  function ObjectLoader(obj, keys, xref) {
-    this.obj = obj;
+  function ObjectLoader(dict, keys, xref) {
+    this.dict = dict;
     this.keys = keys;
     this.xref = xref;
     this.refSet = null;
@@ -1683,8 +1654,7 @@ var ObjectLoader = (function() {
   }
 
   ObjectLoader.prototype = {
-    load: function ObjectLoader_load() {
-      var keys = this.keys;
+    load() {
       this.capability = createPromiseCapability();
       // Don't walk the graph if all the data is already loaded.
       if (!(this.xref.stream instanceof ChunkedStream) ||
@@ -1693,23 +1663,28 @@ var ObjectLoader = (function() {
         return this.capability.promise;
       }
 
+      let { keys, dict, } = this;
       this.refSet = new RefSet();
       // Setup the initial nodes to visit.
-      var nodesToVisit = [];
-      for (var i = 0; i < keys.length; i++) {
-        nodesToVisit.push(this.obj[keys[i]]);
+      let nodesToVisit = [];
+      for (let i = 0, ii = keys.length; i < ii; i++) {
+        let rawValue = dict.getRaw(keys[i]);
+        // Skip nodes that are guaranteed to be empty.
+        if (rawValue !== undefined) {
+          nodesToVisit.push(rawValue);
+        }
       }
 
       this._walk(nodesToVisit);
       return this.capability.promise;
     },
 
-    _walk: function ObjectLoader_walk(nodesToVisit) {
-      var nodesToRevisit = [];
-      var pendingRequests = [];
+    _walk(nodesToVisit) {
+      let nodesToRevisit = [];
+      let pendingRequests = [];
       // DFS walk of the object graph.
       while (nodesToVisit.length) {
-        var currentNode = nodesToVisit.pop();
+        let currentNode = nodesToVisit.pop();
 
         // Only references or chunked streams can cause missing data exceptions.
         if (isRef(currentNode)) {
@@ -1718,28 +1693,24 @@ var ObjectLoader = (function() {
             continue;
           }
           try {
-            var ref = currentNode;
-            this.refSet.put(ref);
+            this.refSet.put(currentNode);
             currentNode = this.xref.fetch(currentNode);
-          } catch (e) {
-            if (!(e instanceof MissingDataException)) {
-              throw e;
+          } catch (ex) {
+            if (!(ex instanceof MissingDataException)) {
+              throw ex;
             }
             nodesToRevisit.push(currentNode);
-            pendingRequests.push({ begin: e.begin, end: e.end });
+            pendingRequests.push({ begin: ex.begin, end: ex.end, });
           }
         }
         if (currentNode && currentNode.getBaseStreams) {
-          var baseStreams = currentNode.getBaseStreams();
-          var foundMissingData = false;
-          for (var i = 0; i < baseStreams.length; i++) {
-            var stream = baseStreams[i];
+          let baseStreams = currentNode.getBaseStreams();
+          let foundMissingData = false;
+          for (let i = 0, ii = baseStreams.length; i < ii; i++) {
+            let stream = baseStreams[i];
             if (stream.getMissingChunks && stream.getMissingChunks().length) {
               foundMissingData = true;
-              pendingRequests.push({
-                begin: stream.start,
-                end: stream.end
-              });
+              pendingRequests.push({ begin: stream.start, end: stream.end, });
             }
           }
           if (foundMissingData) {
@@ -1751,32 +1722,31 @@ var ObjectLoader = (function() {
       }
 
       if (pendingRequests.length) {
-        this.xref.stream.manager.requestRanges(pendingRequests).then(
-            function pendingRequestCallback() {
-          nodesToVisit = nodesToRevisit;
-          for (var i = 0; i < nodesToRevisit.length; i++) {
-            var node = nodesToRevisit[i];
-            // Remove any reference nodes from the currrent refset so they
+        this.xref.stream.manager.requestRanges(pendingRequests).then(() => {
+          for (let i = 0, ii = nodesToRevisit.length; i < ii; i++) {
+            let node = nodesToRevisit[i];
+            // Remove any reference nodes from the current `RefSet` so they
             // aren't skipped when we revist them.
             if (isRef(node)) {
               this.refSet.remove(node);
             }
           }
-          this._walk(nodesToVisit);
-        }.bind(this), this.capability.reject);
+          this._walk(nodesToRevisit);
+        }, this.capability.reject);
         return;
       }
       // Everything is loaded.
       this.refSet = null;
       this.capability.resolve();
-    }
+    },
   };
 
   return ObjectLoader;
 })();
 
-exports.Catalog = Catalog;
-exports.ObjectLoader = ObjectLoader;
-exports.XRef = XRef;
-exports.FileSpec = FileSpec;
-}));
+export {
+  Catalog,
+  ObjectLoader,
+  XRef,
+  FileSpec,
+};

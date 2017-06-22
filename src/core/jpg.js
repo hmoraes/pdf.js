@@ -12,20 +12,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/* eslint-disable no-multi-spaces */
 
-'use strict';
-
-(function (root, factory) {
-  if (typeof define === 'function' && define.amd) {
-    define('pdfjs/core/jpg', ['exports', 'pdfjs/shared/util'], factory);
-  } else if (typeof exports !== 'undefined') {
-    factory(exports, require('../shared/util.js'));
-  } else {
-    factory((root.pdfjsCoreJpg = {}), root.pdfjsSharedUtil);
-  }
-}(this, function (exports, sharedUtil) {
-
-var error = sharedUtil.error;
+import { error, warn } from '../shared/util';
 
 /**
  * This code was forked from https://github.com/notmasteryet/jpgjs.
@@ -78,7 +67,7 @@ var JpegImage = (function JpegImageClosure() {
     while (length > 0 && !codeLengths[length - 1]) {
       length--;
     }
-    code.push({children: [], index: 0});
+    code.push({ children: [], index: 0, });
     var p = code[0], q;
     for (i = 0; i < length; i++) {
       for (j = 0; j < codeLengths[i]; j++) {
@@ -90,7 +79,7 @@ var JpegImage = (function JpegImageClosure() {
         p.index++;
         code.push(p);
         while (code.length <= i) {
-          code.push(q = {children: [], index: 0});
+          code.push(q = { children: [], index: 0, });
           p.children[p.index] = q.children;
           p = q;
         }
@@ -98,7 +87,7 @@ var JpegImage = (function JpegImageClosure() {
       }
       if (i + 1 < length) {
         // p here points to last code
-        code.push(q = {children: [], index: 0});
+        code.push(q = { children: [], index: 0, });
         p.children[p.index] = q.children;
         p = q;
       }
@@ -321,20 +310,19 @@ var JpegImage = (function JpegImageClosure() {
       decodeFn = decodeBaseline;
     }
 
-    var mcu = 0, marker;
+    var mcu = 0, fileMarker;
     var mcuExpected;
     if (componentsLength === 1) {
       mcuExpected = components[0].blocksPerLine * components[0].blocksPerColumn;
     } else {
       mcuExpected = mcusPerLine * frame.mcusPerColumn;
     }
-    if (!resetInterval) {
-      resetInterval = mcuExpected;
-    }
 
     var h, v;
     while (mcu < mcuExpected) {
       // reset interval stuff
+      var mcuToRead = resetInterval ?
+        Math.min(mcuExpected - mcu, resetInterval) : mcuExpected;
       for (i = 0; i < componentsLength; i++) {
         components[i].pred = 0;
       }
@@ -342,12 +330,12 @@ var JpegImage = (function JpegImageClosure() {
 
       if (componentsLength === 1) {
         component = components[0];
-        for (n = 0; n < resetInterval; n++) {
+        for (n = 0; n < mcuToRead; n++) {
           decodeBlock(component, decodeFn, mcu);
           mcu++;
         }
       } else {
-        for (n = 0; n < resetInterval; n++) {
+        for (n = 0; n < mcuToRead; n++) {
           for (i = 0; i < componentsLength; i++) {
             component = components[i];
             h = component.h;
@@ -364,14 +352,16 @@ var JpegImage = (function JpegImageClosure() {
 
       // find marker
       bitsCount = 0;
-      marker = (data[offset] << 8) | data[offset + 1];
-      // Some bad images seem to pad Scan blocks with zero bytes, skip past
+      fileMarker = findNextFileMarker(data, offset);
+      // Some bad images seem to pad Scan blocks with e.g. zero bytes, skip past
       // those to attempt to find a valid marker (fixes issue4090.pdf).
-      while (data[offset] === 0x00 && offset < data.length - 1) {
-        offset++;
-        marker = (data[offset] << 8) | data[offset + 1];
+      if (fileMarker && fileMarker.invalid) {
+        warn('decodeScan - unexpected MCU data, next marker is: ' +
+             fileMarker.invalid);
+        offset = fileMarker.offset;
       }
-      if (marker <= 0xFF00) {
+      var marker = fileMarker && fileMarker.marker;
+      if (!marker || marker <= 0xFF00) {
         error('JPEG error: marker was not found');
       }
 
@@ -380,6 +370,15 @@ var JpegImage = (function JpegImageClosure() {
       } else {
         break;
       }
+    }
+
+    fileMarker = findNextFileMarker(data, offset);
+    // Some images include more Scan blocks than expected, skip past those and
+    // attempt to find the next valid marker (fixes issue8182.pdf).
+    if (fileMarker && fileMarker.invalid) {
+      warn('decodeScan - unexpected Scan data, next marker is: ' +
+           fileMarker.invalid);
+      offset = fileMarker.offset;
     }
 
     return offset - startOffset;
@@ -593,6 +592,39 @@ var JpegImage = (function JpegImageClosure() {
     return a <= 0 ? 0 : a >= 255 ? 255 : a;
   }
 
+  function findNextFileMarker(data, currentPos, startPos) {
+    function peekUint16(pos) {
+      return (data[pos] << 8) | data[pos + 1];
+    }
+
+    var maxPos = data.length - 1;
+    var newPos = startPos < currentPos ? startPos : currentPos;
+
+    if (currentPos >= maxPos) {
+      return null; // Don't attempt to read non-existent data and just return.
+    }
+    var currentMarker = peekUint16(currentPos);
+    if (currentMarker >= 0xFFC0 && currentMarker <= 0xFFFE) {
+      return {
+        invalid: null,
+        marker: currentMarker,
+        offset: currentPos,
+      };
+    }
+    var newMarker = peekUint16(newPos);
+    while (!(newMarker >= 0xFFC0 && newMarker <= 0xFFFE)) {
+      if (++newPos >= maxPos) {
+        return null; // Don't attempt to read non-existent data and just return.
+      }
+      newMarker = peekUint16(newPos);
+    }
+    return {
+      invalid: currentMarker.toString(16),
+      marker: newMarker,
+      offset: newPos,
+    };
+  }
+
   JpegImage.prototype = {
     parse: function parse(data) {
 
@@ -604,7 +636,16 @@ var JpegImage = (function JpegImageClosure() {
 
       function readDataBlock() {
         var length = readUint16();
-        var array = data.subarray(offset, offset + length - 2);
+        var endOffset = offset + length - 2;
+
+        var fileMarker = findNextFileMarker(data, endOffset, offset);
+        if (fileMarker && fileMarker.invalid) {
+          warn('readDataBlock - incorrect length, next marker is: ' +
+               fileMarker.invalid);
+          endOffset = fileMarker.offset;
+        }
+
+        var array = data.subarray(offset, endOffset);
         offset += array.length;
         return array;
       }
@@ -616,7 +657,7 @@ var JpegImage = (function JpegImageClosure() {
           component = frame.components[i];
           var blocksPerLine = Math.ceil(Math.ceil(frame.samplesPerLine / 8) *
                                         component.h / frame.maxH);
-          var blocksPerColumn = Math.ceil(Math.ceil(frame.scanLines  / 8) *
+          var blocksPerColumn = Math.ceil(Math.ceil(frame.scanLines / 8) *
                                           component.v / frame.maxV);
           var blocksPerLineForMcu = mcusPerLine * component.h;
           var blocksPerColumnForMcu = mcusPerColumn * component.v;
@@ -670,14 +711,14 @@ var JpegImage = (function JpegImageClosure() {
                   appData[2] === 0x49 && appData[3] === 0x46 &&
                   appData[4] === 0) { // 'JFIF\x00'
                 jfif = {
-                  version: { major: appData[5], minor: appData[6] },
+                  version: { major: appData[5], minor: appData[6], },
                   densityUnits: appData[7],
                   xDensity: (appData[8] << 8) | appData[9],
                   yDensity: (appData[10] << 8) | appData[11],
                   thumbWidth: appData[12],
                   thumbHeight: appData[13],
                   thumbData: appData.subarray(14, 14 +
-                                              3 * appData[12] * appData[13])
+                                              3 * appData[12] * appData[13]),
                 };
               }
             }
@@ -690,7 +731,7 @@ var JpegImage = (function JpegImageClosure() {
                   version: (appData[5] << 8) | appData[6],
                   flags0: (appData[7] << 8) | appData[8],
                   flags1: (appData[9] << 8) | appData[10],
-                  transformCode: appData[11]
+                  transformCode: appData[11],
                 };
               }
             }
@@ -708,7 +749,7 @@ var JpegImage = (function JpegImageClosure() {
                   z = dctZigZag[j];
                   tableData[z] = data[offset++];
                 }
-              } else if ((quantizationTableSpec >> 4) === 1) { //16 bit
+              } else if ((quantizationTableSpec >> 4) === 1) { // 16 bit values
                 for (j = 0; j < 64; j++) {
                   z = dctZigZag[j];
                   tableData[z] = readUint16();
@@ -749,8 +790,8 @@ var JpegImage = (function JpegImageClosure() {
               }
               var qId = data[offset + 2];
               l = frame.components.push({
-                h: h,
-                v: v,
+                h,
+                v,
                 quantizationId: qId,
                 quantizationTable: null, // See comment below.
               });
@@ -789,7 +830,7 @@ var JpegImage = (function JpegImageClosure() {
             break;
 
           case 0xFFDA: // SOS (Start of Scan)
-            var scanLength = readUint16();
+            readUint16(); // scanLength
             var selectorsCount = data[offset++];
             var components = [], component;
             for (i = 0; i < selectorsCount; i++) {
@@ -850,7 +891,7 @@ var JpegImage = (function JpegImageClosure() {
           scaleX: component.h / frame.maxH,
           scaleY: component.v / frame.maxV,
           blocksPerLine: component.blocksPerLine,
-          blocksPerColumn: component.blocksPerColumn
+          blocksPerColumn: component.blocksPerColumn,
         });
       }
       this.numComponents = this.components.length;
@@ -917,15 +958,15 @@ var JpegImage = (function JpegImageClosure() {
           return false;
         }
         return true;
-      } else { // `this.numComponents !== 3`
-        if (!this.adobe && this.colorTransform === 1) {
-          // If the Adobe transform marker is not present and the image
-          // dictionary has a 'ColorTransform' entry, explicitly set to `1`,
-          // then the colours should be transformed.
-          return true;
-        }
-        return false;
       }
+      // `this.numComponents !== 3`
+      if (!this.adobe && this.colorTransform === 1) {
+        // If the Adobe transform marker is not present and the image
+        // dictionary has a 'ColorTransform' entry, explicitly set to `1`,
+        // then the colours should be transformed.
+        return true;
+      }
+      return false;
     },
 
     _convertYccToRgb: function convertYccToRgb(data) {
@@ -1071,19 +1112,19 @@ var JpegImage = (function JpegImageClosure() {
         if (this._isColorConversionNeeded()) {
           if (forceRGBoutput) {
             return this._convertYcckToRgb(data);
-          } else {
-            return this._convertYcckToCmyk(data);
           }
+          return this._convertYcckToCmyk(data);
         } else if (forceRGBoutput) {
           return this._convertCmykToRgb(data);
         }
       }
       return data;
-    }
+    },
   };
 
   return JpegImage;
 })();
 
-exports.JpegImage = JpegImage;
-}));
+export {
+  JpegImage,
+};

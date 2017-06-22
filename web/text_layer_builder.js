@@ -13,19 +13,8 @@
  * limitations under the License.
  */
 
-'use strict';
-
-(function (root, factory) {
-  if (typeof define === 'function' && define.amd) {
-    define('pdfjs-web/text_layer_builder', ['exports', 'pdfjs-web/dom_events',
-        'pdfjs-web/pdfjs'], factory);
-  } else if (typeof exports !== 'undefined') {
-    factory(exports, require('./dom_events.js'), require('./pdfjs.js'));
-  } else {
-    factory((root.pdfjsWebTextLayerBuilder = {}), root.pdfjsWebDOMEvents,
-      root.pdfjsWebPDFJS);
-  }
-}(this, function (exports, domEvents, pdfjsLib) {
+import { getGlobalEventBus } from './dom_events';
+import { renderTextLayer } from 'pdfjs-lib';
 
 var EXPAND_DIVS_TIMEOUT = 300; // ms
 
@@ -50,7 +39,7 @@ var EXPAND_DIVS_TIMEOUT = 300; // ms
 var TextLayerBuilder = (function TextLayerBuilderClosure() {
   function TextLayerBuilder(options) {
     this.textLayerDiv = options.textLayerDiv;
-    this.eventBus = options.eventBus || domEvents.getGlobalEventBus();
+    this.eventBus = options.eventBus || getGlobalEventBus();
     this.textContent = null;
     this.renderingDone = false;
     this.pageIdx = options.pageIndex;
@@ -97,19 +86,19 @@ var TextLayerBuilder = (function TextLayerBuilderClosure() {
 
       this.textDivs = [];
       var textLayerFrag = document.createDocumentFragment();
-      this.textLayerRenderTask = pdfjsLib.renderTextLayer({
+      this.textLayerRenderTask = renderTextLayer({
         textContent: this.textContent,
         container: textLayerFrag,
         viewport: this.viewport,
         textDivs: this.textDivs,
-        timeout: timeout,
+        timeout,
         enhanceTextSelection: this.enhanceTextSelection,
       });
-      this.textLayerRenderTask.promise.then(function () {
+      this.textLayerRenderTask.promise.then(() => {
         this.textLayerDiv.appendChild(textLayerFrag);
         this._finishRendering();
         this.updateMatches();
-      }.bind(this), function (reason) {
+      }, function (reason) {
         // cancelled or failed to render text layer -- skipping errors
       });
     },
@@ -158,8 +147,8 @@ var TextLayerBuilder = (function TextLayerBuilderClosure() {
         var match = {
           begin: {
             divIdx: i,
-            offset: matchIdx - iIndex
-          }
+            offset: matchIdx - iIndex,
+          },
         };
 
         // Calculate the end position.
@@ -178,7 +167,7 @@ var TextLayerBuilder = (function TextLayerBuilderClosure() {
 
         match.end = {
           divIdx: i,
-          offset: matchIdx - iIndex
+          offset: matchIdx - iIndex,
         };
         ret.push(match);
       }
@@ -204,7 +193,7 @@ var TextLayerBuilder = (function TextLayerBuilderClosure() {
                           false : this.findController.state.highlightAll);
       var infinity = {
         divIdx: -1,
-        offset: undefined
+        offset: undefined,
       };
 
       function beginText(begin, className) {
@@ -408,17 +397,18 @@ DefaultTextLayerFactory.prototype = {
    * @param {boolean} enhanceTextSelection
    * @returns {TextLayerBuilder}
    */
-  createTextLayerBuilder: function (textLayerDiv, pageIndex, viewport,
-                                    enhanceTextSelection) {
+  createTextLayerBuilder(textLayerDiv, pageIndex, viewport,
+                         enhanceTextSelection = false) {
     return new TextLayerBuilder({
-      textLayerDiv: textLayerDiv,
-      pageIndex: pageIndex,
-      viewport: viewport,
-      enhanceTextSelection: enhanceTextSelection
+      textLayerDiv,
+      pageIndex,
+      viewport,
+      enhanceTextSelection,
     });
-  }
+  },
 };
 
-exports.TextLayerBuilder = TextLayerBuilder;
-exports.DefaultTextLayerFactory = DefaultTextLayerFactory;
-}));
+export {
+  TextLayerBuilder,
+  DefaultTextLayerFactory,
+};
